@@ -51,7 +51,7 @@ def find_gff_file(organism, gff_folder=None):
         print("paths found")
     else:
         print(f"Gff file for {organism} not found, writing to output.")
-        with open("no_gff_files.txt") as outfile:
+        with open("no_gff_files.txt", "a") as outfile:
             outfile.writelines(f"{organism}")
         raise FileNotFoundError
 
@@ -172,8 +172,9 @@ def get_pairs(start, end, seq_id, db, aegerolysin_proteins, protein):
             #koda ki ti izmed vseh proteinov lahko poišče tistega, ki ima ujemajoč protein id.
             for key in aegerolysin_proteins:
                 if protein_id in key:
-                    
-                    pairs.append(feature.id)
+                    pair = feature.id
+                    if pair not in pairs:
+                        pairs.append(feature.id)
     except IndexError:
         print(f"No pairs foud for protein {protein}")
     except TypeError:
@@ -185,6 +186,7 @@ def get_pairs(start, end, seq_id, db, aegerolysin_proteins, protein):
 def output_pairs(protein, pairs):
     with open("output_pairs.csv", "a", newline="") as csvfile:
         writer = csv.writer(csvfile)
+        pairs = ",".join(pairs)
         writer.writerow([protein.long_name, pairs])
 
 def main():
