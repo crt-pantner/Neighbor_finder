@@ -53,7 +53,7 @@ def get_arguments():
         "-o",
         required=False,
         type=str,
-        help="Prefix for output csv file containing the proteins and their pairs. Default is 'output_pair.csv'",
+        help="Prefix for output csv file containing the proteins and their pairs. Default is 'output_pair'",
         default="output_pairs",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
@@ -88,7 +88,7 @@ def get_organism_objs(seqio_dict):
     return organism_objs
 
 
-def find_gff_file(organism, gff_folder=None):
+def find_gff_file(organism, outpath, gff_folder=None):
     """Finds the gff file for each organism."""
 
     logging.debug(f"Looking for {organism} gff file")
@@ -98,8 +98,8 @@ def find_gff_file(organism, gff_folder=None):
         logging.debug("paths found")
     else:
         logging.debug(f"Gff file for {organism} not found, writing to output.")
-        with open("no_gff_files.txt", "a", newline="\n") as outfile:
-            outfile.writelines(f"{organism}")
+        with open(f"{outpath}_not_found.txt", "a", newline="\n") as outfile:
+            outfile.writelines(f"No gff file found: {organism}\n")
         raise FileNotFoundError
 
     return [str(p) for p in paths]
@@ -176,7 +176,7 @@ def group_proteins(organisms):
     return groups
 
 
-def get_feature(protein, dbs):
+def get_feature(protein, dbs, outpath):
     """Finds each protein in the query file in the respective database created for each organism groups gff file."""
 
     logging.debug(f"Finding the {protein} feature from the database")
@@ -207,6 +207,10 @@ def get_feature(protein, dbs):
             logging.debug(f"Error in DB: {e}")
 
         logging.debug(f"Protein {protein.protid} not found in any DB")
+        with open(f"{outpath}_not_found.txt", "a") as outfile:
+            outfile.writelines(f"Protein was not found in gff file, perhaps file is structure differently: {protein.long_name}\n")
+        raise FileNotFoundError
+            
 
 
 def get_pairs(protein, db, aegerolysin_proteins, choords):
@@ -235,7 +239,8 @@ def get_pairs(protein, db, aegerolysin_proteins, choords):
             # Find the proteins that have the same protein id as in the target fasta file.
             """This essentialy checks for each protein in the vicinitiy of query protein, if it's present in the target fasta file. So that would mean it is a target aegerolysin."""
             for key in aegerolysin_proteins:
-                if protein_id in key:
+                key = key.split("|")[2]
+                if protein_id == key:
                     pair = feature.id
                     if pair not in pairs:
                         pairs.append(feature)
@@ -295,7 +300,7 @@ def main():
     # For each protein group (same species), find its gff file
     for group in tqdm(organism_groups, desc="Processing groups"):
         try:
-            paths = find_gff_file(group, gff_folder=arguments.gff)
+            paths = find_gff_file(group, gff_folder=arguments.gff, outpath=arguments.o)
 
             # Open the database for gffutils for this file
             dbs = open_dbs(paths, group)
@@ -303,7 +308,7 @@ def main():
             for protein in organism_groups[group]["proteins"]:
 
                 # Find the protein in the gff file
-                protein, db = get_feature(protein, dbs)
+                protein, db = get_feature(protein, dbs, outpath=arguments.o)
 
                 # Find the proteins that lie around our query protein
                 pairs = get_pairs(
@@ -319,7 +324,7 @@ def main():
                     # Output the protein and it's pairs to output file.
                     output_pairs(protein=protein, pairs=pairs, output_file=arguments.o)
         except FileNotFoundError:
-            pass
+            continue
 
 
 if __name__ == "__main__":
