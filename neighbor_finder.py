@@ -239,8 +239,8 @@ def get_pairs(protein, db, aegerolysin_proteins, choords):
             # Find the proteins that have the same protein id as in the target fasta file.
             """This essentialy checks for each protein in the vicinitiy of query protein, if it's present in the target fasta file. So that would mean it is a target aegerolysin."""
             for key in aegerolysin_proteins:
-                key = key.split("|")[2]
-                if protein_id == key:
+                key = key.split("|")
+                if protein.short_name == key[1] and protein_id == key[2]:
                     pair = feature.id
                     if pair not in pairs:
                         pairs.append(feature)
