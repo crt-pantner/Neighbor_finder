@@ -1,4 +1,4 @@
-import gffutils, re, time
+import gffutils
 from Bio import SeqIO
 import argparse
 from pathlib import Path
