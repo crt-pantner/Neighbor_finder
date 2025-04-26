@@ -5,6 +5,7 @@ from pathlib import Path
 import csv
 from tqdm import tqdm
 import logging
+import sqlite3
 
 
 class Protein:
@@ -56,6 +57,13 @@ def get_arguments():
         help="Prefix for output csv file containing the proteins and their pairs. Default is 'output_pair'",
         default="output_pairs",
     )
+    parser.add_argument(
+        "-db_folder",
+        required=False,
+        type=str,
+        help="Prefix/path to folder for saving databases. If provided,, will keep the gffutils database file. Usefull if program is ran multiple times, as it speeds up the process. On default will only save database into memory.",
+        default=":memory:"
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     args = parser.parse_args()
     return args
@@ -91,11 +99,17 @@ def get_organism_objs(seqio_dict):
 def find_gff_file(organism, outpath, gff_folder=None):
     """Finds the gff file for each organism."""
 
-    logging.debug(f"Looking for {organism} gff file")
-    paths = list(Path(gff_folder).rglob(f"{organism}*.gff3*"))
+    logging.debug(f"\nLooking for {organism} gff files")
+    
+    paths = [
+    p
+    for p in Path(gff_folder).rglob(f"{organism}*.gff3*")
+    if not (p.name.endswith(".tar") or p.name.endswith(".tar.gz"))
+]
+    
 
     if paths:
-        logging.debug("paths found")
+        logging.debug("Paths of gff3 files found.")
     else:
         logging.debug(f"Gff file for {organism} not found, writing to output.")
         with open(f"{outpath}_not_found.txt", "a", newline="\n") as outfile:
@@ -123,39 +137,77 @@ def logger(args):
         level=logging.DEBUG if args == True else logging.WARNING, format="%(message)s"
     )
 
+   
+def database_creator(db_path, gff_file_path, force=False):
 
-def open_dbs(paths, group):
+    
+    gff_file_path = Path(gff_file_path)
+    
+    
+
+    gffutils_database = gffutils.create_db(
+        str(gff_file_path.resolve()),
+        dbfn=str(db_path),
+        merge_strategy="create_unique",
+        id_spec={"transcript": "transcriptId", "gene": "ID", "exon": "ID", "mRNA": "ID"},
+        gtf_transcript_key="transcriptId",
+        gtf_gene_key="gene",
+        transform=transform,
+        force=force
+    )
+    return gffutils_database
+
+
+def open_dbs(gff_paths, db_path, organism_group):
     """Opens the gffutils sqlite database for each organism."""
-
-    logging.debug("Creating database and loading into memory")
-
+    
     dbs = []
 
-    # It opens the gff database for gffutils.
-    for fn in paths:
-        try:
-            db = gffutils.create_db(
-                fn,
-                dbfn=":memory:",
-                merge_strategy="create_unique",
-                id_spec={"transcript": "transcriptId", "gene": "Name", "exon": "ID"},
-                gtf_transcript_key="transcriptId",
-                gtf_gene_key="gene",
-                transform=transform,
-            )
-            dbs.append(db)
-        except Exception as e:
-            logging.debug(f"Database creation error, skipping")
-            continue
+    if db_path == ":memory:":
+        logging.debug("Creating database and loading into memory")
 
-    logging.debug(f"Database created and loaded into memory.")
+        # Creates the database and loads into memory
+        for fn in gff_paths:
+            try:
+                db = database_creator(db_path=db_path, gff_file_path=fn)
+                dbs.append(db)
+            except Exception as e:
+                logging.debug(f"Database creation error, skipping")
+                continue
 
-    organism_names = []
-    for organism in organism_names:
-        if organism.short_name not in organism_names:
-            organism_names.append(organism.short_name)
+        logging.debug(f"Database created and loaded into memory.")
+
+    # If the user chooses an output directory
     else:
-        pass
+        db_path = Path(db_path) 
+        db_path = db_path / f"{organism_group}.db"
+        
+
+        for fn in gff_paths:
+            
+            if db_path.exists():
+                # Grab the database and instantiate FeatureDB object if the database already exists
+                logging.debug(f"Database already exists, reusing.")
+                db = gffutils.FeatureDB(str(db_path))
+                dbs.append(db)
+
+            else:
+                # If the database doesn't exist yet, create it and save into user specified directory.
+
+                try:
+                    db_path = db_path.resolve()
+                    logging.debug(f"Creating database and saving into {db_path}")
+                    for fn in gff_paths:
+                        logging.debug(f"Creating database from {fn}")
+                        
+                        
+                        db = database_creator(db_path, gff_file_path=fn)
+                        dbs.append(db)
+                    logging.debug(f"Database created and saved to: {db_path}")
+                except sqlite3.OperationalError: #Happens because sometimes the program finds two of the same gff files for some organisms, based on the name - Example Irplac118 and Irplac1 can return same file, which leads to the program trying to create the same database twice.
+                    continue
+        
+
 
     return dbs
 
@@ -255,6 +307,9 @@ def get_pairs(protein, db, aegerolysin_proteins, choords):
 def output_pairs(protein, pairs, output_file):
     output = []
 
+    output_file = Path(output_file)
+    output_file = output_file.resolve() / "pairs"
+
     # Preping query protein for output
     output.extend(
         [protein.short_name, protein.protid, protein.feature.start, protein.feature.end]
@@ -262,13 +317,13 @@ def output_pairs(protein, pairs, output_file):
 
     # Preping the pairs for output
     for f in pairs:
-        split_id = f.id.split("|")
-        short_name = split_id[1]
-        protid = split_id[2]
+        split_id = f.id.split("_")
+        short_name = split_id[0]
+        protid = split_id[1]
         output.extend([short_name, protid, f.start, f.stop])
 
     # outputing to file.
-    with open(f"{output_file}.csv", "a", newline="") as csvfile:
+    with open(f"{str(output_file)}.csv", "a", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(output)
 
@@ -303,7 +358,7 @@ def main():
             paths = find_gff_file(group, gff_folder=arguments.gff, outpath=arguments.o)
 
             # Open the database for gffutils for this file
-            dbs = open_dbs(paths, group)
+            dbs = open_dbs(gff_paths=paths, db_path=arguments.db_folder, organism_group=group)
 
             for protein in organism_groups[group]["proteins"]:
 
