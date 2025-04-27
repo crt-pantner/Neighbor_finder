@@ -7,155 +7,17 @@ from tqdm import tqdm
 import logging
 import sqlite3
 
-
-class Protein:
-    def __init__(self, short_name, long_name, sequence, protid):
-        self.short_name = short_name
-        self.path = None
-        self.long_name = long_name
-        self.sequence = sequence
-        self.protid = protid
-        self.feature = None
-
-    def __str__(self):
-        return f"Protein object: {self.long_name}"
+from cli import get_arguments
+from utilities import *
+from protein_class import Protein
+from input_otuput import *
+from helpers import get_nighbourhood
 
 
-# Get command line arguments
-def get_arguments():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-iq",
-        required=True,
-        type=str,
-        help="Path to fasta file with proteins around which to search (MACPF fasta file)",
-    )
-    parser.add_argument(
-        "-it",
-        required=False,
-        type=str,
-        help="Path to fastafile with target proteins (Aegerolysin fasta  file).",
-    )
-    parser.add_argument(
-        "-gff",
-        required=False,
-        type=str,
-        help="Path to folder that contains gff files.",
-        default="D:/Documents/Magistrska/poskus_celotnega/Mycocosm_download",
-    )
-    parser.add_argument(
-        "-choords",
-        required=False,
-        type=int,
-        help="Flanking region around proteins. If no value is passed, will pick proteins from whole chromosome",
-        default=0,
-    )
-    parser.add_argument(
-        "-o",
-        required=False,
-        type=str,
-        help="Prefix for output csv file containing the proteins and their pairs. Default is 'output_pair'",
-        default="output_pairs",
-    )
-    parser.add_argument(
-        "-db_folder",
-        required=False,
-        type=str,
-        help="Prefix/path to folder for saving databases. If provided,, will keep the gffutils database file. Usefull if program is ran multiple times, as it speeds up the process. On default will only save database into memory.",
-        default=":memory:"
-    )
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
-    args = parser.parse_args()
-    return args
 
 
-# Handles opening the fasta file
-def open_fasta_file(location):
-    """Helper function that simply opens the fasta files and loads the into a seqio dictionary"""
-
-    logging.debug(f"Opening fasta file: {location}")
-    dict = SeqIO.to_dict(SeqIO.parse(location, "fasta"))
-    return dict
 
 
-def get_organism_objs(seqio_dict):
-    """Creates instances of organism objects form the seqio dictionary. This just ensures easier handling downstream"""
-
-    organism_objs = []
-
-    for key in seqio_dict.keys():
-        org_name = key.split("|")[1]
-        protein_id = key.split("|")[2]
-        organism = Protein(
-            short_name=org_name,
-            long_name=key,
-            sequence=seqio_dict[key],
-            protid=protein_id,
-        )
-        organism_objs.append(organism)
-    return organism_objs
-
-
-def find_gff_file(organism, outpath, gff_folder=None):
-    """Finds the gff file for each organism."""
-
-    logging.debug(f"\nLooking for {organism} gff files")
-    
-    paths = [
-    p
-    for p in Path(gff_folder).rglob(f"{organism}*.gff3*")
-    if not (p.name.endswith(".tar") or p.name.endswith(".tar.gz"))
-]
-    
-
-    if paths:
-        logging.debug("Paths of gff3 files found.")
-    else:
-        logging.debug(f"Gff file for {organism} not found, writing to output.")
-        with open(f"{outpath}_not_found.txt", "a", newline="\n") as outfile:
-            outfile.writelines(f"No gff file found: {organism}\n")
-        raise FileNotFoundError
-
-    return [str(p) for p in paths]
-
-
-def transform(d):
-    """Helper function for gffutils, ensures that features get loaded in properly."""
-    try:
-
-        d["CDS"] = d["exon"].replace("exon_", "CDS:")
-
-    except KeyError:
-
-        pass
-
-    return d
-
-
-def logger(args):
-    level = logging.basicConfig(
-        level=logging.DEBUG if args == True else logging.WARNING, format="%(message)s"
-    )
-
-   
-def database_creator(db_path, gff_file_path, force=False):
-
-    
-    gff_file_path = Path(gff_file_path)
-    
-    
-
-    gffutils_database = gffutils.create_db(
-        str(gff_file_path.resolve()),
-        dbfn=str(db_path),
-        merge_strategy="create_unique",
-        id_spec={"transcript": "transcriptId", "gene": "ID", "exon": "ID", "mRNA": "ID"},
-        gtf_transcript_key="transcriptId",
-        gtf_gene_key="gene",
-        transform=transform,
-        force=force
-    )
-    return gffutils_database
 
 
 def open_dbs(gff_paths, db_path, organism_group):
@@ -228,7 +90,7 @@ def group_proteins(organisms):
     return groups
 
 
-def get_feature(protein, dbs, outpath):
+def get_feature(protein: Protein, dbs, outpath):
     """Finds each protein in the query file in the respective database created for each organism groups gff file."""
 
     logging.debug(f"Finding the {protein} feature from the database")
@@ -304,43 +166,17 @@ def get_pairs(protein, db, aegerolysin_proteins, choords):
     return pairs
 
 
-def output_pairs(protein, pairs, output_file):
-    output = []
-
-    output_file = Path(output_file)
-    output_file = output_file.resolve() / "pairs"
-
-    # Preping query protein for output
-    output.extend(
-        [protein.short_name, protein.protid, protein.feature.start, protein.feature.end]
-    )
-
-    # Preping the pairs for output
-    for f in pairs:
-        split_id = f.id.split("_")
-        short_name = split_id[0]
-        protid = split_id[1]
-        output.extend([short_name, protid, f.start, f.stop])
-
-    # outputing to file.
-    with open(f"{str(output_file)}.csv", "a", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(output)
 
 
-def get_nighbourhood(start, end, choords):
-    """get the desired genomic neighbourhood"""
 
-    upstream = start - choords
-    downstream = end + choords
-    return upstream, downstream
+
 
 
 def main():
     # Get input arguments
     arguments = get_arguments()
 
-    logger(args=arguments.verbose)
+    get_logger(args=arguments.verbose)
 
     # Open macpf and aegerolysin fasta files and store them as a dict
     macpf_dict = open_fasta_file(arguments.iq)
